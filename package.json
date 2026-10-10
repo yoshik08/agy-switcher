@@ -1,0 +1,47 @@
+{
+  "name": "geminiswitcher",
+  "version": "1.0.0",
+  "description": "Claude Code-style terminal wrapper for Google Antigravity CLI (agy) — manage multiple Google AI accounts with automatic limit-based switching",
+  "license": "MIT",
+  "author": "yoshik08",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yoshik08/agy-switcher.git"
+  },
+  "keywords": [
+    "gemini",
+    "antigravity",
+    "agy",
+    "cli",
+    "ai",
+    "agent",
+    "account-switcher"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "geminiswitcher": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "start": "node dist/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "keytar": "^7.9.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

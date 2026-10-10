@@ -1,0 +1,90 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.loadState = loadState;
+exports.saveState = saveState;
+/* Persistent state: accounts + settings in ~/.config/geminiswitcher/state.json */
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
+const config_1 = require("./config");
+function blank() {
+    return {
+        version: 1,
+        activeAccountId: null,
+        autoswitch: true,
+        accounts: [],
+        settings: (0, config_1.withDefaults)(),
+    };
+}
+function loadState() {
+    const file = (0, config_1.stateFile)();
+    try {
+        const raw = fs.readFileSync(file, "utf8");
+        const parsed = JSON.parse(raw);
+        const base = blank();
+        const merged = {
+            version: 1,
+            activeAccountId: parsed.activeAccountId ?? base.activeAccountId,
+            autoswitch: parsed.autoswitch ?? base.autoswitch,
+            accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
+            settings: (0, config_1.withDefaults)(parsed.settings ?? {}),
+        };
+        // keep top-level autoswitch flag as the source of truth, mirrored from settings for clarity
+        if (typeof parsed.autoswitch === "boolean")
+            merged.settings.autoswitch = parsed.autoswitch;
+        else
+            merged.autoswitch = merged.settings.autoswitch;
+        return merged;
+    }
+    catch {
+        return blank();
+    }
+}
+/** Atomic-ish write: write temp file then rename. */
+function saveState(state) {
+    const dir = (0, config_1.configDir)();
+    fs.mkdirSync(dir, { recursive: true });
+    // mirror the toggle in both places
+    state.autoswitch = state.settings.autoswitch;
+    const tmp = path.join(dir, `.state.json.${process.pid}.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+    fs.renameSync(tmp, (0, config_1.stateFile)());
+    try {
+        fs.chmodSync((0, config_1.stateFile)(), 0o600);
+    }
+    catch {
+        /* best effort on odd platforms */
+    }
+}
