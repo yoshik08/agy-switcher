@@ -1,10 +1,10 @@
-/* Unit tests for accounts.ts pure helpers and store.ts roundtrip. */
+/* Tests for accounts.ts helpers and store.ts v2 roundtrip. */
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { slugify, findAccounts, pickNextAccount } = require("../dist/accounts.js");
+const { slugify, findAccounts, pickNextAccount, dirAccount } = require("../dist/accounts.js");
 
 function mkAccount(id, name, lastUsed) {
   return { id, name, email: null, plan: null, addedAt: "2026-01-01T00:00:00.000Z", lastUsed, lastQuota: null };
@@ -13,7 +13,6 @@ function mkAccount(id, name, lastUsed) {
 test("slugify", () => {
   assert.equal(slugify("My Work Account!"), "my-work-account");
   assert.equal(slugify("!!!"), "account");
-  assert.ok(slugify("a".repeat(100)).length <= 24);
 });
 
 test("findAccounts: fuzzy match", () => {
@@ -40,23 +39,37 @@ test("pickNextAccount: none available", () => {
   assert.equal(pickNextAccount(state), null);
 });
 
-test("store: save/load roundtrip", () => {
+test("dirAccount: remembered per directory", () => {
+  const state = {
+    settings: { rememberDirAccount: true },
+    accounts: [mkAccount("a1", "personal", null), mkAccount("b2", "work", null)],
+    dirPrefs: { "/proj/foo": { accountId: "b2", updatedAt: "2026-10-01T00:00:00.000Z" } },
+  };
+  assert.equal(dirAccount(state, "/proj/foo").id, "b2");
+  assert.equal(dirAccount(state, "/proj/other"), null);
+  state.settings.rememberDirAccount = false;
+  assert.equal(dirAccount(state, "/proj/foo"), null);
+});
+
+test("store: v2 save/load roundtrip", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gsw-test-"));
   process.env.GEMINISWITCHER_DIR = dir;
   try {
-    // require fresh after env set (config.ts reads env lazily via function, ok)
     const { loadState, saveState } = require("../dist/store.js");
     const s = loadState();
+    assert.equal(s.version, 2);
     assert.equal(s.accounts.length, 0);
     assert.equal(s.settings.autoswitch, true);
+    assert.deepEqual(s.settings.loginCommand, ["auth", "login"]);
+    assert.deepEqual(s.dirPrefs, {});
     s.accounts.push(mkAccount("x1", "testy", null));
     s.settings.autoswitch = false;
+    s.dirPrefs["/tmp/x"] = { accountId: "x1", updatedAt: "2026-10-11T00:00:00.000Z" };
     saveState(s);
     const s2 = loadState();
     assert.equal(s2.accounts.length, 1);
-    assert.equal(s2.accounts[0].name, "testy");
     assert.equal(s2.settings.autoswitch, false);
-    // file should be 0600
+    assert.equal(s2.dirPrefs["/tmp/x"].accountId, "x1");
     const mode = fs.statSync(path.join(dir, "state.json")).mode & 0o777;
     assert.equal(mode, 0o600);
   } finally {

@@ -1,7 +1,6 @@
 "use strict";
-/* Tiny terminal UI helpers (no external deps — plain ANSI). */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HELP_TEXT = exports.gray = exports.cyan = exports.blue = exports.yellow = exports.green = exports.red = exports.dim = exports.bold = void 0;
+exports.HELP_TEXT = exports.gray = exports.cyan = exports.magenta = exports.blue = exports.yellow = exports.green = exports.red = exports.dim = exports.bold = void 0;
 exports.tag = tag;
 exports.info = info;
 exports.ok = ok;
@@ -9,6 +8,10 @@ exports.warn = warn;
 exports.err = err;
 exports.table = table;
 exports.banner = banner;
+exports.statusBar = statusBar;
+exports.relTime = relTime;
+exports.panel = panel;
+exports.accountLabel = accountLabel;
 const codes = {
     reset: "\x1b[0m",
     bold: "\x1b[1m",
@@ -38,13 +41,14 @@ const yellow = (s) => wrap("yellow", s);
 exports.yellow = yellow;
 const blue = (s) => wrap("blue", s);
 exports.blue = blue;
+const magenta = (s) => wrap("magenta", s);
+exports.magenta = magenta;
 const cyan = (s) => wrap("cyan", s);
 exports.cyan = cyan;
 const gray = (s) => wrap("gray", s);
 exports.gray = gray;
-/** Prefix for all geminiswitcher wrapper messages so they're distinguishable from agy output. */
 function tag() {
-    return (0, exports.cyan)("[geminiswitcher]");
+    return (0, exports.cyan)("◆ geminiswitcher");
 }
 function info(msg) {
     process.stdout.write(`${tag()} ${msg}\n`);
@@ -58,7 +62,6 @@ function warn(msg) {
 function err(msg) {
     process.stdout.write(`${tag()} ${(0, exports.red)("✗")} ${msg}\n`);
 }
-/** Simple left-aligned table printer. */
 function table(headers, rows) {
     const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
     const line = (cells) => cells.map((c, i) => c.padEnd(widths[i])).join("  ");
@@ -71,42 +74,88 @@ function banner(version) {
     const out = process.stdout;
     out.write("\n");
     out.write((0, exports.bold)((0, exports.cyan)("  ◆ geminiswitcher")) + (0, exports.dim)(`  v${version}`) + "\n");
-    out.write((0, exports.dim)("  multi-account wrapper for the Antigravity CLI (agy)") + "\n");
+    out.write((0, exports.dim)("  claude-code-style home for the antigravity cli") + "\n");
     out.write("\n");
 }
+/** One-line status bar: fits the terminal width, truncated if needed. */
+function statusBar(state, cols, extra) {
+    const acct = state.accounts.find((a) => a.id === state.activeAccountId) ?? null;
+    const dot = state.settings.autoswitch ? (0, exports.green)("●") : (0, exports.gray)("○");
+    const who = acct
+        ? `${(0, exports.bold)(acct.name)}${acct.plan ? (0, exports.dim)(` ${acct.plan.replace(/^AI\s*/, "")}`) : ""}`
+        : (0, exports.dim)("no account");
+    const quota = acct?.lastQuota && isFresh(acct.lastQuota.at) ? (0, exports.dim)(` · ${acct.lastQuota.text}`) : "";
+    const right = `${state.settings.autoswitch ? (0, exports.dim)("autoswitch on") : (0, exports.dim)("autoswitch off")} ${(0, exports.dim)("·")} ${(0, exports.dim)("/ or ctrl+g")}`;
+    const mid = extra ? ` ${(0, exports.yellow)("!")} ${extra}` : "";
+    let left = `${dot} ${who}${quota}${mid}`;
+    // crude width fit: strip to cols
+    const plain = stripAnsi(left + "   " + right);
+    if (plain.length > cols) {
+        left = `${dot} ${acct ? (0, exports.bold)(acct.name) : (0, exports.dim)("no account")}${mid}`;
+    }
+    const gap = Math.max(1, cols - stripAnsi(left).length - stripAnsi(right).length);
+    return `${left}${" ".repeat(gap)}${right}`;
+}
+function isFresh(iso) {
+    return Date.now() - new Date(iso).getTime() < 6 * 60 * 60 * 1000;
+}
+function stripAnsi(s) {
+    // eslint-disable-next-line no-control-regex
+    return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+function relTime(v) {
+    if (!v)
+        return (0, exports.dim)("—");
+    const ms = Date.now() - new Date(v).getTime();
+    if (ms < 0)
+        return (0, exports.dim)("—");
+    const m = Math.floor(ms / 60000);
+    if (m < 1)
+        return "just now";
+    if (m < 60)
+        return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24)
+        return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+}
+/** A clean full-width panel block for flow progress (switch/add). */
+function panel(title, lines) {
+    const bar = (0, exports.dim)("─".repeat(52));
+    return [`\n${bar}`, `${(0, exports.bold)(title)}`, ...lines.map((l) => `  ${l}`), `${bar}\n`].join("\n");
+}
+function accountLabel(a) {
+    const email = a.email ? (0, exports.dim)(` <${a.email}>`) : "";
+    const plan = a.plan ? (0, exports.dim)(` · ${a.plan}`) : "";
+    return `${(0, exports.bold)(a.name)}${email}${plan}`;
+}
 exports.HELP_TEXT = `
-${(0, exports.bold)("Slash commands")}  ${(0, exports.dim)("(intercepted by geminiswitcher — agy never sees them)")}
+${(0, exports.bold)("Commands")}  ${(0, exports.dim)("(press / or ctrl+g anywhere — agy never sees these)")}
 
-  ${(0, exports.cyan)("/add")}              Add a Google account via browser login (stored securely in OS keyring)
+  ${(0, exports.cyan)("/add")}              Add a Google account via ${(0, exports.bold)("agy auth login")} (stored in OS keyring)
   ${(0, exports.cyan)("/accounts")}         List all accounts with plan, usage and active marker  ${(0, exports.dim)("(alias: /list)")}
-  ${(0, exports.cyan)("/usage")}            Show remaining quota for all accounts, then ask agy for live current-account usage
-  ${(0, exports.cyan)("/switch")} <name>    Manually switch to another account (restarts agy, resumes with -c)
+  ${(0, exports.cyan)("/usage")}            Remaining quota for all accounts, then live current-account usage from agy
+  ${(0, exports.cyan)("/switch")} <name>    Switch account now (tab-completes names, resumes with -c)
   ${(0, exports.cyan)("/autoswitch-on")}    Enable automatic switching when a limit is hit
   ${(0, exports.cyan)("/autoswitch-off")}   Disable automatic switching entirely
-  ${(0, exports.cyan)("/handoff")}          Write handoff.md snapshot on demand (optional, off by default)
-  ${(0, exports.cyan)("/help")}             Show this help
+  ${(0, exports.cyan)("/handoff")}          Write a handoff.md snapshot on demand (optional, off by default)
+  ${(0, exports.cyan)("/help")}             This help
 
-${(0, exports.bold)("Autoswitch behavior")}
+${(0, exports.bold)("Autoswitch")}
 
-  ${(0, exports.green)("ON")}  — when a hard limit (RESOURCE_EXHAUSTED / 429) is detected in agy's output,
-         geminiswitcher quits agy, swaps the next account's token into the
-         system keyring (service=gemini, account=antigravity), and relaunches
-         ${(0, exports.bold)("agy -c")} in the same directory so the conversation resumes.
-         No handoff.md is written unless you enable it (config: handoffEnabled).
+  ${(0, exports.green)("ON")}  — on a hard limit (RESOURCE_EXHAUSTED / 429) geminiswitcher takes over
+         the screen, swaps the next account's token into the keyring
+         (service=gemini, account=antigravity), and relaunches ${(0, exports.bold)("agy -c")}
+         in the same directory. No handoff.md unless you enabled it.
 
-  ${(0, exports.yellow)("OFF")} — nothing automatic happens. No account switch, no resume,
-         and ${(0, exports.bold)("no handoff.md is ever generated")}. You stay on the current
-         account until you /switch manually or re-enable autoswitch.
+  ${(0, exports.yellow)("OFF")} — nothing automatic. No switches, and ${(0, exports.bold)("no handoff.md is ever written")}.
+         You stay put until you /switch manually.
 
-${(0, exports.bold)("Context preservation")}
-  True mid-process credential swapping doesn't work — a running agy holds its
-  token in memory. So on switch we quit agy and relaunch with ${(0, exports.bold)("agy -c")}
-  (or --conversation <id> when one was captured). Resume-based, minimal fuss.
+${(0, exports.bold)("Context")}  Resume-based: a running agy holds its token in memory, so every
+         switch quits agy and relaunches with ${(0, exports.bold)("agy -c")} (or --conversation <id>).
+         The dying account is never asked to write a summary.
 
-${(0, exports.bold)("Limitations")}
-  • The OS keyring slot agy reads is machine-wide (service=gemini, account=antigravity).
-  • A running agy must be quit before its credentials can be swapped.
-  • Quota figures are best-effort: cached from agy's own output; use /usage.
-  • The /add login flow shells out to agy's own login command (configurable).
-  • Tokens never leave your machine. No telemetry, ever.
+${(0, exports.bold)("Notes")}    The keyring slot agy reads is machine-wide. Quota figures are
+         best-effort observations from agy's own output. Tokens never leave
+         this machine. No telemetry.
 `.trim();

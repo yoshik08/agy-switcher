@@ -1,9 +1,14 @@
-import { State } from "./types";
-import { Session } from "./session";
-export interface CommandContext {
-    session: Session;
+import { Account, State } from "./types";
+import { PaletteCommand } from "./palette";
+export interface CmdEnv {
     state: State;
-    /** End the whole geminiswitcher session (quits agy too). */
-    quit: () => Promise<void>;
+    switchTo(account: Account, reason: string): Promise<void>;
+    addAccount(): Promise<void>;
+    setAutoswitch(on: boolean): void;
+    writeHandoff(reason: string): void;
+    forwardToAgy(text: string): void;
+    accountNames(partial: string): string[];
 }
-export declare function handleSlashCommand(cmd: string, args: string[], ctx: CommandContext): Promise<void>;
+export declare function runCommand(name: string, args: string[], env: CmdEnv): Promise<void>;
+/** Registry driving the palette (order = display order). */
+export declare function commandRegistry(env: CmdEnv): PaletteCommand[];

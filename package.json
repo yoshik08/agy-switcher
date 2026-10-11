@@ -1,6 +1,6 @@
 {
   "name": "geminiswitcher",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Claude Code-style terminal wrapper for Google Antigravity CLI (agy) — manage multiple Google AI accounts with automatic limit-based switching",
   "license": "MIT",
   "author": "yoshik08",

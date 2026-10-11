@@ -1,4 +1,4 @@
-/* Tests for slash command handlers with a fake session. */
+/* Tests for v2 command implementations via CmdEnv. */
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
@@ -21,19 +21,28 @@ if (!require.cache[keytarPath]) {
 }
 
 const { loadState, saveState } = require("../dist/store.js");
-const { handleSlashCommand } = require("../dist/commands.js");
+const { runCommand, commandRegistry } = require("../dist/commands.js");
 const { setVaultToken, setActiveToken } = require("../dist/keyring.js");
 
-function makeCtx(state) {
+function makeEnv(state) {
   const calls = [];
-  const fakeSession = {
-    cwd: "/tmp",
-    conversationId: null,
-    busy: false,
-    sendToAgy: (t) => calls.push(["sendToAgy", t]),
-    restart: async (args) => calls.push(["restart", args]),
+  return {
+    env: {
+      state,
+      switchTo: async (a, reason) => calls.push(["switchTo", a.name, reason]),
+      addAccount: async () => calls.push(["addAccount"]),
+      setAutoswitch: (on) => {
+        state.settings.autoswitch = on;
+        saveState(state);
+        calls.push(["setAutoswitch", on]);
+      },
+      writeHandoff: (reason) => calls.push(["writeHandoff", reason]),
+      forwardToAgy: (t) => calls.push(["forwardToAgy", t]),
+      accountNames: (partial) =>
+        state.accounts.map((a) => a.name).filter((n) => n.toLowerCase().startsWith(partial)),
+    },
+    calls,
   };
-  return { ctx: { session: fakeSession, state, quit: async () => calls.push(["quit"]) }, calls };
 }
 
 async function seedState() {
@@ -59,103 +68,91 @@ async function seedState() {
   return { state, dir };
 }
 
-test("commands: /help prints without throwing", async () => {
+function cleanup(dir) {
+  delete process.env.GEMINISWITCHER_DIR;
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+test("registry: all required commands present", async () => {
   const { state, dir } = await seedState();
   try {
-    const { ctx } = makeCtx(state);
-    await handleSlashCommand("help", [], ctx);
+    const { env } = makeEnv(state);
+    const names = commandRegistry(env).map((c) => c.name);
+    for (const c of ["add", "accounts", "usage", "switch", "autoswitch-on", "autoswitch-off", "handoff", "help"]) {
+      assert.ok(names.includes(c), c);
+    }
+    const sw = commandRegistry(env).find((c) => c.name === "switch");
+    assert.deepEqual(sw.completeArg("per"), ["personal"]);
+    assert.deepEqual(sw.completeArg(""), ["personal", "work"]);
   } finally {
-    delete process.env.GEMINISWITCHER_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
+    cleanup(dir);
   }
 });
 
-test("commands: /accounts lists", async () => {
+test("commands: /accounts and /list run", async () => {
   const { state, dir } = await seedState();
   try {
-    const { ctx } = makeCtx(state);
-    await handleSlashCommand("accounts", [], ctx);
-    await handleSlashCommand("list", [], ctx);
+    const { env } = makeEnv(state);
+    await runCommand("accounts", [], env);
+    await runCommand("list", [], env);
   } finally {
-    delete process.env.GEMINISWITCHER_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
+    cleanup(dir);
   }
 });
 
-test("commands: /autoswitch-off then /autoswitch-on toggle persisted state", async () => {
+test("commands: autoswitch toggle persists", async () => {
   const { state, dir } = await seedState();
   try {
-    const { ctx } = makeCtx(state);
-    await handleSlashCommand("autoswitch-off", [], ctx);
-    assert.equal(state.settings.autoswitch, false);
-    const reloaded = loadState();
-    assert.equal(reloaded.settings.autoswitch, false);
-    await handleSlashCommand("autoswitch-on", [], ctx);
-    assert.equal(state.settings.autoswitch, true);
+    const { env, calls } = makeEnv(state);
+    await runCommand("autoswitch-off", [], env);
+    assert.equal(loadState().settings.autoswitch, false);
+    assert.ok(calls.some((c) => c[0] === "setAutoswitch" && c[1] === false));
+    await runCommand("autoswitch-on", [], env);
+    assert.equal(loadState().settings.autoswitch, true);
   } finally {
-    delete process.env.GEMINISWITCHER_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
+    cleanup(dir);
   }
 });
 
-test("commands: /switch changes account and restarts", async () => {
+test("commands: /switch dispatches with fuzzy match", async () => {
   const { state, dir } = await seedState();
   try {
-    const { ctx, calls } = makeCtx(state);
-    await handleSlashCommand("switch", ["work"], ctx);
-    assert.equal(state.activeAccountId, "id-work");
-    assert.ok(calls.some((c) => c[0] === "restart"), "expected restart call");
-    const restartArgs = calls.find((c) => c[0] === "restart")[1];
-    assert.deepEqual(restartArgs, ["-c"]);
+    const { env, calls } = makeEnv(state);
+    await runCommand("switch", ["wor"], env);
+    assert.ok(calls.some((c) => c[0] === "switchTo" && c[1] === "work"));
   } finally {
-    delete process.env.GEMINISWITCHER_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
+    cleanup(dir);
   }
 });
 
-test("commands: /switch unknown name errors cleanly", async () => {
+test("commands: /switch unknown name does not dispatch", async () => {
   const { state, dir } = await seedState();
   try {
-    const { ctx, calls } = makeCtx(state);
-    await handleSlashCommand("switch", ["nope"], ctx);
-    assert.equal(state.activeAccountId, "id-personal");
-    assert.ok(!calls.some((c) => c[0] === "restart"));
+    const { env, calls } = makeEnv(state);
+    await runCommand("switch", ["nope"], env);
+    assert.ok(!calls.some((c) => c[0] === "switchTo"));
   } finally {
-    delete process.env.GEMINISWITCHER_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
+    cleanup(dir);
   }
 });
 
 test("commands: /usage forwards to agy", async () => {
   const { state, dir } = await seedState();
   try {
-    const { ctx, calls } = makeCtx(state);
-    await handleSlashCommand("usage", [], ctx);
-    assert.ok(
-      calls.some((c) => c[0] === "sendToAgy" && c[1] === "/usage\r"),
-      "expected /usage forwarded to agy"
-    );
+    const { env, calls } = makeEnv(state);
+    await runCommand("usage", [], env);
+    assert.ok(calls.some((c) => c[0] === "forwardToAgy" && c[1] === "/usage\r"));
   } finally {
-    delete process.env.GEMINISWITCHER_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
+    cleanup(dir);
   }
 });
 
-test("commands: /handoff writes file only on demand", async () => {
+test("commands: /help prints", async () => {
   const { state, dir } = await seedState();
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gsw-ho-"));
   try {
-    const { ctx } = makeCtx(state);
-    ctx.session.cwd = cwd;
-    ctx.session.recentOutput = "some output";
-    assert.ok(!fs.existsSync(path.join(cwd, "handoff.md")));
-    await handleSlashCommand("handoff", [], ctx);
-    assert.ok(fs.existsSync(path.join(cwd, "handoff.md")));
-    const body = fs.readFileSync(path.join(cwd, "handoff.md"), "utf8");
-    assert.ok(body.includes("personal"));
+    const { env } = makeEnv(state);
+    await runCommand("help", [], env);
   } finally {
-    delete process.env.GEMINISWITCHER_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(cwd, { recursive: true, force: true });
+    cleanup(dir);
   }
 });

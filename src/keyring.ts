@@ -2,9 +2,9 @@
  *
  * Two namespaces:
  *  - ACTIVE slot: service="gemini", account="antigravity" — the single slot agy reads.
- *  - VAULT:       service="geminiswitcher", account="account:<id>" — one entry per added account.
+ *  - VAULT:       service="geminiswitcher", account="account:<id>" — one entry per account.
  *
- * Tokens are treated as opaque strings: whatever agy stored is copied verbatim.
+ * Tokens are opaque strings: whatever agy stored is copied verbatim.
  */
 import { ACTIVE_ACCOUNT, ACTIVE_SERVICE, VAULT_SERVICE, vaultKey } from "./config";
 
@@ -36,7 +36,6 @@ function friendly(e: unknown, what: string): Error {
   );
 }
 
-/** Read the token agy is currently using (may be null). */
 export async function getActiveToken(): Promise<string | null> {
   try {
     return await lib().getPassword(ACTIVE_SERVICE, ACTIVE_ACCOUNT);
@@ -45,7 +44,6 @@ export async function getActiveToken(): Promise<string | null> {
   }
 }
 
-/** Write a token into the slot agy reads. */
 export async function setActiveToken(token: string): Promise<void> {
   try {
     await lib().setPassword(ACTIVE_SERVICE, ACTIVE_ACCOUNT, token);
@@ -54,18 +52,6 @@ export async function setActiveToken(token: string): Promise<void> {
   }
 }
 
-export async function clearActiveToken(): Promise<void> {
-  try {
-    await lib().deletePassword(ACTIVE_SERVICE, ACTIVE_ACCOUNT);
-  } catch (e) {
-    // deleting a non-existent entry throws on some backends — treat as cleared
-    if (!/not found/i.test(e instanceof Error ? e.message : String(e))) {
-      throw friendly(e, "clear (gemini/antigravity)");
-    }
-  }
-}
-
-/** Read a stored per-account token from our vault. */
 export async function getVaultToken(accountId: string): Promise<string | null> {
   try {
     return await lib().getPassword(VAULT_SERVICE, vaultKey(accountId));
@@ -92,7 +78,6 @@ export async function deleteVaultToken(accountId: string): Promise<void> {
   }
 }
 
-/** Find which vault account (if any) already holds this exact token. */
 export async function findVaultOwner(
   token: string,
   accountIds: string[]

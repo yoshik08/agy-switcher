@@ -1,0 +1,38 @@
+import { State } from "./types";
+export declare class Application {
+    private state;
+    private readonly agyArgs;
+    private readonly cwd;
+    private term;
+    private pty;
+    private router;
+    private palette;
+    private detector;
+    private guard;
+    private phase;
+    private outputWindow;
+    private lastHardLimitAt;
+    private softNotice;
+    private doneResolve;
+    private done;
+    private cmdEnv;
+    constructor(state: State, agyArgs: string[], cwd: string);
+    run(): Promise<void>;
+    private printStartup;
+    private spawnAgy;
+    private onPtyData;
+    private learnQuota;
+    private onPtyExit;
+    private onLimitEvent;
+    private openPalette;
+    private onPaletteKey;
+    private manualSwitch;
+    private addAccount;
+    private setAutoswitch;
+    private manualHandoff;
+    private flowContext;
+    private conversationId;
+    private refreshStatus;
+    private shutdown;
+    printHelp(): void;
+}

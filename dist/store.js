@@ -35,17 +35,20 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadState = loadState;
 exports.saveState = saveState;
-/* Persistent state: accounts + settings in ~/.config/geminiswitcher/state.json */
+/* Persistent state: accounts + settings + per-directory prefs.
+ * Stored at ~/.config/geminiswitcher/state.json (mode 0600).
+ */
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const config_1 = require("./config");
 function blank() {
     return {
-        version: 1,
+        version: 2,
         activeAccountId: null,
         autoswitch: true,
         accounts: [],
         settings: (0, config_1.withDefaults)(),
+        dirPrefs: {},
     };
 }
 function loadState() {
@@ -55,13 +58,18 @@ function loadState() {
         const parsed = JSON.parse(raw);
         const base = blank();
         const merged = {
-            version: 1,
+            version: 2,
             activeAccountId: parsed.activeAccountId ?? base.activeAccountId,
             autoswitch: parsed.autoswitch ?? base.autoswitch,
             accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
             settings: (0, config_1.withDefaults)(parsed.settings ?? {}),
+            dirPrefs: parsed.dirPrefs && typeof parsed.dirPrefs === "object" ? parsed.dirPrefs : {},
         };
-        // keep top-level autoswitch flag as the source of truth, mirrored from settings for clarity
+        // Migrate v1 loginCommands -> v2 loginCommand (correct flow only).
+        const v1 = parsed;
+        if (v1.settings?.loginCommands && !parsed.settings?.loginCommand) {
+            merged.settings.loginCommand = ["auth", "login"];
+        }
         if (typeof parsed.autoswitch === "boolean")
             merged.settings.autoswitch = parsed.autoswitch;
         else
@@ -72,11 +80,10 @@ function loadState() {
         return blank();
     }
 }
-/** Atomic-ish write: write temp file then rename. */
 function saveState(state) {
     const dir = (0, config_1.configDir)();
     fs.mkdirSync(dir, { recursive: true });
-    // mirror the toggle in both places
+    state.version = 2;
     state.autoswitch = state.settings.autoswitch;
     const tmp = path.join(dir, `.state.json.${process.pid}.tmp`);
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
@@ -85,6 +92,6 @@ function saveState(state) {
         fs.chmodSync((0, config_1.stateFile)(), 0o600);
     }
     catch {
-        /* best effort on odd platforms */
+        /* best effort */
     }
 }

@@ -38,11 +38,11 @@ exports.configDir = configDir;
 exports.stateFile = stateFile;
 exports.defaultSettings = defaultSettings;
 exports.withDefaults = withDefaults;
-/* Constants, paths and default settings. */
+/* Constants, paths and default settings (v2). */
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 exports.APP_NAME = "geminiswitcher";
-exports.VERSION = "1.0.0";
+exports.VERSION = "2.0.0";
 /** OS keyring slot that agy itself reads. Single-slot per machine. */
 exports.ACTIVE_SERVICE = "gemini";
 exports.ACTIVE_ACCOUNT = "antigravity";
@@ -50,7 +50,6 @@ exports.ACTIVE_ACCOUNT = "antigravity";
 exports.VAULT_SERVICE = "geminiswitcher";
 const vaultKey = (accountId) => `account:${accountId}`;
 exports.vaultKey = vaultKey;
-/** Config/state directory. Overridable via GEMINISWITCHER_DIR (handy for tests). */
 function configDir() {
     const override = process.env.GEMINISWITCHER_DIR;
     if (override && override.trim())
@@ -64,7 +63,8 @@ function defaultSettings() {
     return {
         autoswitch: true,
         agyPath: process.env.GEMINISWITCHER_AGY || "agy",
-        loginCommands: [["login"], ["auth", "login"]],
+        // Correct login flow. Never "login" alone.
+        loginCommand: ["auth", "login"],
         resumeArgs: ["-c"],
         preferConversationId: true,
         forwardUsageToAgy: true,
@@ -72,9 +72,12 @@ function defaultSettings() {
         injectContinuePrompt: false,
         continuePromptText: "Continuing previous session after an automatic account switch. Please carry on.",
         limitCooldownMs: 60_000,
+        switchLoopMax: 2,
+        switchLoopWindowMs: 10 * 60_000,
+        rememberDirAccount: true,
+        paletteKey: "ctrl+g",
     };
 }
-/** Deep-merge user settings over defaults so new defaults apply cleanly. */
 function withDefaults(partial = {}) {
     return { ...defaultSettings(), ...partial };
 }

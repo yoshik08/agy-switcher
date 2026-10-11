@@ -42,11 +42,13 @@ exports.activate = activate;
 exports.removeAccount = removeAccount;
 exports.registerAccount = registerAccount;
 exports.pickNextAccount = pickNextAccount;
+exports.dirAccount = dirAccount;
 exports.ensureActiveSlot = ensureActiveSlot;
-/* Account management: metadata in state.json, tokens in the OS keyring vault. */
+/* Account management: metadata in state.json, tokens in the OS keyring vault,
+ * plus per-directory account memory.
+ */
 const crypto = __importStar(require("crypto"));
 const store_1 = require("./store");
-const detect_1 = require("./detect");
 const keyring_1 = require("./keyring");
 const ui_1 = require("./ui");
 function slugify(name) {
@@ -68,7 +70,6 @@ function activeAccount(state) {
         return null;
     return getAccount(state, state.activeAccountId) ?? null;
 }
-/** Fuzzy find by name, email, or id prefix. Returns matches. */
 function findAccounts(state, query) {
     const q = query.toLowerCase();
     return state.accounts.filter((a) => a.name.toLowerCase().includes(q) ||
@@ -77,20 +78,20 @@ function findAccounts(state, query) {
 }
 /**
  * Make `account` the active one: copy its vault token into the agy keyring slot.
- * Throws with a clear message if anything goes wrong (caller decides UX).
  */
-async function activate(state, account) {
+async function activate(state, account, dir) {
     const token = await (0, keyring_1.getVaultToken)(account.id);
     if (!token) {
-        throw new Error(`No stored credential for "${account.name}" in the OS keyring vault. ` +
-            `Re-add it with /add.`);
+        throw new Error(`No stored credential for "${account.name}" in the OS keyring vault. Re-add it with /add.`);
     }
     await (0, keyring_1.setActiveToken)(token);
     account.lastUsed = new Date().toISOString();
     state.activeAccountId = account.id;
+    if (dir && state.settings.rememberDirAccount) {
+        state.dirPrefs[dir] = { accountId: account.id, updatedAt: new Date().toISOString() };
+    }
     (0, store_1.saveState)(state);
 }
-/** Remove an account entirely (metadata + vault token). Active account cannot be removed. */
 async function removeAccount(state, account) {
     if (state.activeAccountId === account.id) {
         throw new Error(`"${account.name}" is the active account — /switch away from it first.`);
@@ -99,16 +100,12 @@ async function removeAccount(state, account) {
     state.accounts = state.accounts.filter((a) => a.id !== account.id);
     (0, store_1.saveState)(state);
 }
-/**
- * Register a freshly-captured token as a new account.
- * Returns the created account. Does NOT activate it (caller decides).
- */
 async function registerAccount(state, name, token) {
     const now = new Date().toISOString();
     const account = {
         id: newAccountId(name),
         name: name.trim() || "account",
-        email: (0, detect_1.extractEmail)(token),
+        email: extractEmail(token),
         plan: null,
         addedAt: now,
         lastUsed: null,
@@ -119,7 +116,7 @@ async function registerAccount(state, name, token) {
     (0, store_1.saveState)(state);
     return account;
 }
-/** Pick the next account for autoswitch: least-recently-used, excluding current. */
+/** Least-recently-used account excluding the current one. */
 function pickNextAccount(state) {
     const current = state.activeAccountId;
     const others = state.accounts.filter((a) => a.id !== current);
@@ -131,6 +128,15 @@ function pickNextAccount(state) {
         return ta.localeCompare(tb);
     });
     return others[0];
+}
+/** Account remembered for a directory, if it still exists. */
+function dirAccount(state, dir) {
+    if (!state.settings.rememberDirAccount)
+        return null;
+    const pref = state.dirPrefs[dir];
+    if (!pref)
+        return null;
+    return getAccount(state, pref.accountId) ?? null;
 }
 /** Ensure the active slot holds the active account's token (repairs drift). */
 async function ensureActiveSlot(state) {
@@ -147,4 +153,39 @@ async function ensureActiveSlot(state) {
         await (0, keyring_1.setActiveToken)(vault);
         (0, ui_1.ok)(`Keyring slot refreshed for "${acct.name}".`);
     }
+}
+function extractEmail(token) {
+    const t = token.trim();
+    if (t.startsWith("{")) {
+        try {
+            const obj = JSON.parse(t);
+            const candidates = [
+                obj.email,
+                obj.user_email,
+                obj.user?.email,
+                obj.profile?.email,
+            ];
+            for (const c of candidates) {
+                if (typeof c === "string" && c.includes("@"))
+                    return c;
+            }
+        }
+        catch {
+            /* not JSON */
+        }
+    }
+    const parts = t.split(".");
+    if (parts.length === 3) {
+        try {
+            const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+            if (typeof payload.email === "string" && payload.email.includes("@"))
+                return payload.email;
+        }
+        catch {
+            /* not a JWT */
+        }
+    }
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t))
+        return t;
+    return null;
 }

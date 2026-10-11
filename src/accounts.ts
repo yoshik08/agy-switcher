@@ -1,8 +1,9 @@
-/* Account management: metadata in state.json, tokens in the OS keyring vault. */
+/* Account management: metadata in state.json, tokens in the OS keyring vault,
+ * plus per-directory account memory.
+ */
 import * as crypto from "crypto";
 import { Account, State } from "./types";
 import { saveState } from "./store";
-import { extractEmail } from "./detect";
 import {
   deleteVaultToken,
   getActiveToken,
@@ -34,7 +35,6 @@ export function activeAccount(state: State): Account | null {
   return getAccount(state, state.activeAccountId) ?? null;
 }
 
-/** Fuzzy find by name, email, or id prefix. Returns matches. */
 export function findAccounts(state: State, query: string): Account[] {
   const q = query.toLowerCase();
   return state.accounts.filter(
@@ -47,23 +47,23 @@ export function findAccounts(state: State, query: string): Account[] {
 
 /**
  * Make `account` the active one: copy its vault token into the agy keyring slot.
- * Throws with a clear message if anything goes wrong (caller decides UX).
  */
-export async function activate(state: State, account: Account): Promise<void> {
+export async function activate(state: State, account: Account, dir?: string): Promise<void> {
   const token = await getVaultToken(account.id);
   if (!token) {
     throw new Error(
-      `No stored credential for "${account.name}" in the OS keyring vault. ` +
-        `Re-add it with /add.`
+      `No stored credential for "${account.name}" in the OS keyring vault. Re-add it with /add.`
     );
   }
   await setActiveToken(token);
   account.lastUsed = new Date().toISOString();
   state.activeAccountId = account.id;
+  if (dir && state.settings.rememberDirAccount) {
+    state.dirPrefs[dir] = { accountId: account.id, updatedAt: new Date().toISOString() };
+  }
   saveState(state);
 }
 
-/** Remove an account entirely (metadata + vault token). Active account cannot be removed. */
 export async function removeAccount(state: State, account: Account): Promise<void> {
   if (state.activeAccountId === account.id) {
     throw new Error(`"${account.name}" is the active account — /switch away from it first.`);
@@ -73,10 +73,6 @@ export async function removeAccount(state: State, account: Account): Promise<voi
   saveState(state);
 }
 
-/**
- * Register a freshly-captured token as a new account.
- * Returns the created account. Does NOT activate it (caller decides).
- */
 export async function registerAccount(
   state: State,
   name: string,
@@ -98,7 +94,7 @@ export async function registerAccount(
   return account;
 }
 
-/** Pick the next account for autoswitch: least-recently-used, excluding current. */
+/** Least-recently-used account excluding the current one. */
 export function pickNextAccount(state: State): Account | null {
   const current = state.activeAccountId;
   const others = state.accounts.filter((a) => a.id !== current);
@@ -109,6 +105,14 @@ export function pickNextAccount(state: State): Account | null {
     return ta.localeCompare(tb);
   });
   return others[0];
+}
+
+/** Account remembered for a directory, if it still exists. */
+export function dirAccount(state: State, dir: string): Account | null {
+  if (!state.settings.rememberDirAccount) return null;
+  const pref = state.dirPrefs[dir];
+  if (!pref) return null;
+  return getAccount(state, pref.accountId) ?? null;
 }
 
 /** Ensure the active slot holds the active account's token (repairs drift). */
@@ -125,4 +129,37 @@ export async function ensureActiveSlot(state: State): Promise<void> {
     await setActiveToken(vault);
     ok(`Keyring slot refreshed for "${acct.name}".`);
   }
+}
+
+function extractEmail(token: string): string | null {
+  const t = token.trim();
+  if (t.startsWith("{")) {
+    try {
+      const obj = JSON.parse(t) as Record<string, unknown>;
+      const candidates = [
+        obj.email,
+        obj.user_email,
+        (obj.user as Record<string, unknown> | undefined)?.email,
+        (obj.profile as Record<string, unknown> | undefined)?.email,
+      ];
+      for (const c of candidates) {
+        if (typeof c === "string" && c.includes("@")) return c;
+      }
+    } catch {
+      /* not JSON */
+    }
+  }
+  const parts = t.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
+      ) as Record<string, unknown>;
+      if (typeof payload.email === "string" && payload.email.includes("@")) return payload.email;
+    } catch {
+      /* not a JWT */
+    }
+  }
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) return t;
+  return null;
 }
